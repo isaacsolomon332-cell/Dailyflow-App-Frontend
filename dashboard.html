@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DailyFlow - Life Dashboard</title>
+    
+    <!-- Fonts & Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/main.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+</head>
+<body>
+    <!-- Mobile Menu Button -->
+    <button id="mobileMenuBtn" class="mobile-menu-btn">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- App Container -->
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <i class="fas fa-wave-square"></i>
+                    </div>
+                    <div class="logo-text">DailyFlow</div>
+                </div>
+                <button class ="sidebar-close" onclick="toggleSidebar()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="user-profile">
+                <div class="avatar" id="userAvatar">U</div>
+                <div class="user-info">
+                    <h3 id="userName">User</h3>
+                    <p id="userEmail">Welcome to 2026</p>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#dashboard" class="nav-item active" onclick="showPage('dashboard')">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <span>Dashboard</span>
+                    <span class="nav-badge" id="navDashboardBadge">0</span>
+                </a>
+                <a href="#calendar" class="nav-item" onclick="showPage('calendar')">
+                    <i class="fas fa-calendar-alt"></i>
+                    <span>Calendar</span>
+                    <span class="nav-badge" id="navCalendarBadge">0</span>
+                </a>
+                <a href="#goals" class="nav-item" onclick="showPage('goals')">
+                    <i class="fas fa-bullseye"></i>
+                    <span>Goals</span>
+                    <span class="nav-badge" id="navGoalsBadge">0</span>
+                </a>
+                <a href="#projects" class="nav-item" onclick="showPage('projects')">
+                    <i class="fas fa-project-diagram"></i>
+                    <span>Projects</span>
+                    <span class="nav-badge" id="navProjectsBadge">0</span>
+                </a>
+                <a href="#habits" class="nav-item" onclick="showPage('habits')">
+                    <i class="fas fa-check-circle"></i>
+                    <span>Habits</span>
+                    <span class="nav-badge" id="navHabitsBadge">0</span>
+                </a>
+                <a href="#stats" class="nav-item" onclick="showPage('stats')">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Statistics</span>
+                    <span class="nav-badge" id="navStatsBadge">0</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="date-display">
+                    <i class="fas fa-calendar-day"></i>
+                    <span id="currentDate">Loading...</span>
+                </div>
+                <button class="btn btn-logout" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="header-left">
+                    <h2 id="pageTitle">Dashboard</h2>
+                    <div class="breadcrumb" id="breadcrumb">Home / Dashboard</div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-icon tooltip" onclick="exportData()" title="Export Data">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button class="btn-icon tooltip" onclick="importData()" title="Import Data">
+                        <i class="fas fa-upload"></i>
+                    </button>
+                    <button class="btn-icon tooltip" onclick="toggleTheme()" title="Toggle Theme">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <div class="notification-dropdown">
+                        <button class="btn-notification tooltip" onclick="toggleNotifications()" title="Notifications">
+                            <i class="fas fa-bell"></i>
+                            <span class="notification-badge" id="notificationCount">0</span>
+                        </button>
+                        <div class="notifications-panel" id="notificationsPanel">
+                            <div class="notifications-header">
+                                <h4>Notifications</h4>
+                                <button class="btn-text" onclick="clearAllNotifications()">Clear All</button>
+                            </div>
+                            <div class="notifications-list" id="notificationsList">
+                                <!-- Notifications will appear here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Page Content -->
+            <div class="page-content">
+                <!-- Dashboard Page -->
+                <div id="dashboardPage" class="page active">
+                    <!-- Stats Overview -->
+                    <div class="stats-overview">
+                        <div class="stat-card" onclick="showPage('calendar')">
+                            <div class="stat-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
+                                <i class="fas fa-calendar-check"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3>Today's Progress</h3>
+                                <div class="stat-value" id="todayProgress">0%</div>
+                                <div class="stat-desc" id="todayTasks">0/0 tasks</div>
+                            </div>
+                        </div>
+                        <div class="stat-card" onclick="showPage('goals')">
+                            <div class="stat-icon" style="background: linear-gradient(135deg, #10b981, #34d399);">
+                                <i class="fas fa-bullseye"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3>Goals Achieved</h3>
+                                <div class="stat-value" id="goalsAchieved">0%</div>
+                                <div class="stat-desc" id="goalsCount">0/0 goals</div>
+                            </div>
+                        </div>
+                        <div class="stat-card" onclick="showPage('projects')">
+                            <div class="stat-icon" style="background: linear-gradient(135deg, #8b5cf6, #d946ef);">
+                                <i class="fas fa-project-diagram"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3>Active Projects</h3>
+                                <div class="stat-value" id="activeProjects">0</div>
+                                <div class="stat-desc" id="projectsStatus">In progress</div>
+                            </div>
+                        </div>
+                        <div class="stat-card" onclick="showPage('stats')">
+                            <div class="stat-icon" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3>Study Hours</h3>
+                                <div class="stat-value" id="totalStudyHours">0</div>
+                                <div class="stat-desc">This month</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Actions -->
+                    <div class="section">
+                        <div class="section-header">
+                            <h3>Quick Actions</h3>
+                        </div>
+                        <div class="quick-actions">
+                            <button class="action-btn" onclick="showDayModal(new Date())">
+                                <i class="fas fa-plus-circle"></i>
+                                <span>Log Today</span>
+                            </button>
+                            <button class="action-btn" onclick="showAddGoalModal()">
+                                <i class="fas fa-bullseye"></i>
+                                <span>Add Goal</span>
+                            </button>
+                            <button class="action-btn" onclick="showAddProjectModal()">
+                                <i class="fas fa-project-diagram"></i>
+                                <span>Add Project</span>
+                            </button>
+                            <button class="action-btn" onclick="showAddHabitModal()">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Add Habit</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity & Calendar Preview -->
+                    <div class="grid-2-col">
+                        <div class="section">
+                            <div class="section-header">
+                                <h3>Recent Activity</h3>
+                                <button class="btn btn-text" onclick="showPage('calendar')">View Calendar</button>
+                            </div>
+                            <div class="activity-list" id="recentActivity">
+                                <!-- Activity items will be added here -->
+                            </div>
+                        </div>
+
+                        <div class="section">
+                            <div class="section-header">
+                                <h3>This Week</h3>
+                                <div class="week-nav">
+                                    <button class="btn-icon-sm" onclick="prevWeek()">
+                                        <i class="fas fa-chevron-left"></i>
+                                    </button>
+                                    <span id="currentWeek">Week 1</span>
+                                    <button class="btn-icon-sm" onclick="nextWeek()">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="week-calendar" id="weekCalendar">
+                                <!-- Week view will be added here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Upcoming Deadlines -->
+                    <div class="section">
+                        <div class="section-header">
+                            <h3>Upcoming Deadlines</h3>
+                            <button class="btn btn-text" onclick="showPage('goals')">View All Goals</button>
+                        </div>
+                        <div class="deadlines-list" id="upcomingDeadlines">
+                            <!-- Deadlines will be added here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Calendar Page -->
+                <div id="calendarPage" class="page">
+                    <!-- Calendar page content will be loaded here dynamically -->
+                </div>
+
+                <!-- Goals Page -->
+                <div id="goalsPage" class="page">
+                    <!-- Goals page content will be loaded here dynamically -->
+                </div>
+
+                <!-- Projects Page -->
+                <div id="projectsPage" class="page">
+                    <!-- Projects page content will be loaded here dynamically -->
+                </div>
+
+                <!-- Habits Page -->
+                <div id="habitsPage" class="page">
+                    <!-- Habits page content will be loaded here dynamically -->
+                </div>
+
+                <!-- Statistics Page -->
+                <div id="statsPage" class="page">
+                    <!-- Statistics page content will be loaded here dynamically -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals Container -->
+    <div id="modalsContainer"></div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <!-- JavaScript -->
+    <script src="js/main.js"></script>
+</body>
+</html>
