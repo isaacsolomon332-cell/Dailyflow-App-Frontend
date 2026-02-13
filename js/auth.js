@@ -3,6 +3,15 @@ const API_BASE_URL = "https://dailyflow-backend-kwuc.onrender.com";
 const TOKEN_KEY = "dailyflow_token";
 const USER_KEY = "dailyflow_user";
 
+// Error types for better handling
+const ErrorTypes = {
+    NETWORK: 'network',
+    VALIDATION: 'validation',
+    AUTH: 'authentication',
+    SERVER: 'server',
+    UNKNOWN: 'unknown'
+};
+
 // DOM Elements
 let currentUser = null;
 
@@ -11,35 +20,215 @@ document.addEventListener('DOMContentLoaded', function() {
     checkAuthStatus();
     setupPasswordToggles();
     setupFormValidation();
+    setupInputErrorListeners();
     
-    // Check if user is already logged in
     const token = localStorage.getItem(TOKEN_KEY);
     if (token) {
         verifyTokenAndRedirect();
     }
 });
 
-// ==================== AUTH FUNCTIONS ====================
+// ==================== ADVANCED ERROR HANDLER ====================
+
+class ErrorHandler {
+    static handle(error, context = '') {
+        console.error(`❌ Error in ${context}:`, error);
+        
+        let userMessage = 'An unexpected error occurred. Please try again.';
+        let errorType = ErrorTypes.UNKNOWN;
+        let shouldLogout = false;
+        
+        // Network errors
+        if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+            userMessage = 'Cannot connect to server. Please check your internet connection.';
+            errorType = ErrorTypes.NETWORK;
+        }
+        
+        // API response errors
+        if (error.response) {
+            const status = error.response.status;
+            const data = error.response.data;
+            
+            switch(status) {
+                case 400:
+                    userMessage = data.message || 'Invalid request. Please check your input.';
+                    errorType = ErrorTypes.VALIDATION;
+                    break;
+                    
+                case 401:
+                    userMessage = 'Your session has expired. Please login again.';
+                    errorType = ErrorTypes.AUTH;
+                    shouldLogout = true;
+                    break;
+                    
+                case 403:
+                    userMessage = 'You don\'t have permission to perform this action.';
+                    errorType = ErrorTypes.AUTH;
+                    break;
+                    
+                case 404:
+                    userMessage = 'The requested resource was not found.';
+                    errorType = ErrorTypes.SERVER;
+                    break;
+                    
+                case 409:
+                    userMessage = data.message || 'This information already exists.';
+                    errorType = ErrorTypes.VALIDATION;
+                    break;
+                    
+                case 422:
+                    userMessage = 'Validation failed. Please check your input.';
+                    errorType = ErrorTypes.VALIDATION;
+                    if (data.errors) {
+                        this.displayFieldErrors(data.errors);
+                    }
+                    break;
+                    
+                case 423:
+                    userMessage = data.message || 'Account is temporarily locked.';
+                    errorType = ErrorTypes.AUTH;
+                    break;
+                    
+                case 429:
+                    userMessage = 'Too many requests. Please wait a moment.';
+                    errorType = ErrorTypes.SERVER;
+                    break;
+                    
+                case 500:
+                case 502:
+                case 503:
+                    userMessage = 'Server is having issues. Please try again later.';
+                    errorType = ErrorTypes.SERVER;
+                    break;
+                    
+                default:
+                    userMessage = data.message || 'Something went wrong.';
+            }
+        }
+        
+        // Handle validation errors from backend
+        if (error.validationErrors) {
+            this.displayFieldErrors(error.validationErrors);
+            userMessage = 'Please fix the errors in the form.';
+            errorType = ErrorTypes.VALIDATION;
+        }
+        
+        // Show user-friendly message
+        showToast(userMessage, this.getToastType(errorType));
+        
+        // Logout if needed
+        if (shouldLogout) {
+            setTimeout(() => logout(), 2000);
+        }
+        
+        // Track error for debugging
+        this.logError(error, context, errorType);
+        
+        return { userMessage, errorType };
+    }
+    
+    static displayFieldErrors(errors) {
+        if (Array.isArray(errors)) {
+            errors.forEach(err => {
+                const field = document.getElementById(err.field);
+                if (field) {
+                    field.classList.add('error');
+                    
+                    // Add error message below field
+                    let errorMsg = field.parentElement.querySelector('.error-message');
+                    if (!errorMsg) {
+                        errorMsg = document.createElement('div');
+                        errorMsg.className = 'error-message';
+                        field.parentElement.appendChild(errorMsg);
+                    }
+                    errorMsg.textContent = err.message;
+                    
+                    // Remove error on input
+                    field.addEventListener('input', function() {
+                        this.classList.remove('error');
+                        const msg = this.parentElement.querySelector('.error-message');
+                        if (msg) msg.remove();
+                    }, { once: true });
+                }
+            });
+        }
+    }
+    
+    static getToastType(errorType) {
+        switch(errorType) {
+            case ErrorTypes.NETWORK:
+            case ErrorTypes.SERVER:
+                return 'warning';
+            case ErrorTypes.AUTH:
+                return 'error';
+            case ErrorTypes.VALIDATION:
+                return 'info';
+            default:
+                return 'error';
+        }
+    }
+    
+    static logError(error, context, type) {
+        // In production, you could send this to a logging service
+        const errorLog = {
+            timestamp: new Date().toISOString(),
+            context,
+            type,
+            message: error.message,
+            stack: error.stack,
+            userAgent: navigator.userAgent,
+            url: window.location.href
+        };
+        
+        console.error('Error Log:', errorLog);
+        
+        // Store recent errors for debugging
+        const errors = JSON.parse(localStorage.getItem('dailyflow_errors') || '[]');
+        errors.unshift(errorLog);
+        if (errors.length > 10) errors.pop();
+        localStorage.setItem('dailyflow_errors', JSON.stringify(errors));
+    }
+    
+    static getRecentErrors() {
+        return JSON.parse(localStorage.getItem('dailyflow_errors') || '[]');
+    }
+    
+    static clearErrorLog() {
+        localStorage.removeItem('dailyflow_errors');
+        showToast('Error log cleared', 'success');
+    }
+}
+
+// ==================== AUTH FUNCTIONS WITH ERROR HANDLING ====================
 
 async function login() {
     const usernameOrEmail = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
-    const rememberMe = document.getElementById('rememberMe').checked;
+    const rememberMe = document.getElementById('rememberMe')?.checked || false;
 
-    // Validation
-    if (!usernameOrEmail || !password) {
-        showToast('Please fill in all fields', 'error');
+    // Clear previous errors
+    clearFieldErrors();
+
+    // Frontend validation
+    const validationErrors = [];
+    if (!usernameOrEmail) validationErrors.push({ field: 'loginUsername', message: 'Username or email is required' });
+    if (!password) validationErrors.push({ field: 'loginPassword', message: 'Password is required' });
+    
+    if (validationErrors.length > 0) {
+        ErrorHandler.displayFieldErrors(validationErrors);
+        showToast('Please fill in all required fields', 'error');
         return;
     }
 
     showLoader('Signing you in...', 'Authenticating your credentials...');
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/auth/login`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
+            credentials: 'include',
             body: JSON.stringify({
                 usernameOrEmail: usernameOrEmail,
                 password: password
@@ -51,30 +240,30 @@ async function login() {
         hideLoader();
 
         if (data.success) {
-            // Store token and user data
+            // Store auth data
             localStorage.setItem(TOKEN_KEY, data.data.token);
             localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
             
+            if (rememberMe) {
+                // Token already has 7 day expiry, but we can store preference
+                localStorage.setItem('remember_me', 'true');
+            }
+            
             showLoader('Welcome back!', 'Redirecting to dashboard...');
             
-            // Update step animations
-            updateLoaderStep(1, 'Verifying credentials...');
-            updateLoaderStep(2, 'Loading your data...');
-            updateLoaderStep(3, 'Preparing dashboard...');
-            updateLoaderStep(4, 'Redirecting...');
+            // Track successful login
+            trackUserAction('login_success', data.data.user.username);
             
-            // Redirect to dashboard after 2 seconds
             setTimeout(() => {
                 window.location.href = 'dashboard.html';
             }, 2000);
             
         } else {
-            showToast(data.message || 'Login failed', 'error');
+            ErrorHandler.handle({ response: { status: 400, data } }, 'login');
         }
     } catch (error) {
         hideLoader();
-        showToast('Network error. Please check your connection.', 'error');
-        console.error('Login error:', error);
+        ErrorHandler.handle(error, 'login');
     }
 }
 
@@ -86,54 +275,71 @@ async function signup() {
     const phone = document.getElementById('phone').value.trim();
     const password = document.getElementById('password').value;
     const confirmPassword = document.getElementById('confirmPassword').value;
-    const termsAgreement = document.getElementById('termsAgreement').checked;
-    const newsletter = document.getElementById('newsletter').checked;
+    const termsAgreement = document.getElementById('termsAgreement')?.checked || false;
+    const newsletter = document.getElementById('newsletter')?.checked || false;
 
-    // Validation
-    if (!fullName || !email || !username || !password || !confirmPassword) {
-        showToast('Please fill in all required fields', 'error');
-        return;
-    }
+    // Clear previous errors
+    clearFieldErrors();
 
+    // Frontend validation
+    const validationErrors = [];
+
+    if (!fullName) validationErrors.push({ field: 'fullName', message: 'Full name is required' });
+    if (!email) validationErrors.push({ field: 'email', message: 'Email is required' });
+    if (!username) validationErrors.push({ field: 'username', message: 'Username is required' });
+    if (!password) validationErrors.push({ field: 'password', message: 'Password is required' });
+    if (!confirmPassword) validationErrors.push({ field: 'confirmPassword', message: 'Please confirm your password' });
+    
     if (!termsAgreement) {
-        showToast('You must agree to the Terms of Service', 'error');
+        showToast('You must agree to the Terms of Service', 'warning');
         return;
     }
 
     // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-        showToast('Please enter a valid email address', 'error');
-        return;
+    if (email && !emailRegex.test(email)) {
+        validationErrors.push({ field: 'email', message: 'Please enter a valid email address' });
     }
 
     // Username validation
     const usernameRegex = /^[a-zA-Z0-9_]+$/;
-    if (!usernameRegex.test(username)) {
-        showToast('Username can only contain letters, numbers, and underscores', 'error');
-        return;
+    if (username && !usernameRegex.test(username)) {
+        validationErrors.push({ field: 'username', message: 'Username can only contain letters, numbers, and underscores' });
     }
 
     // Password validation
     const passwordError = validatePassword(password);
     if (passwordError) {
-        showToast(passwordError, 'error');
-        return;
+        validationErrors.push({ field: 'password', message: passwordError });
     }
 
-    if (password !== confirmPassword) {
-        showToast('Passwords do not match', 'error');
+    if (password && confirmPassword && password !== confirmPassword) {
+        validationErrors.push({ field: 'confirmPassword', message: 'Passwords do not match' });
+    }
+
+    // Phone validation (optional)
+    if (phone) {
+        const phoneRegex = /^[\+]?[1-9][0-9\-\(\)\.]{9,}$/;
+        if (!phoneRegex.test(phone)) {
+            validationErrors.push({ field: 'phone', message: 'Please enter a valid phone number' });
+        }
+    }
+
+    if (validationErrors.length > 0) {
+        ErrorHandler.displayFieldErrors(validationErrors);
+        showToast('Please fix the errors in the form', 'error');
         return;
     }
 
     showLoader('Creating your account...', 'Setting up your profile...');
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/auth/signup`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
+            credentials: 'include',
             body: JSON.stringify({
                 fullName: fullName,
                 email: email,
@@ -147,36 +353,67 @@ async function signup() {
         const data = await response.json();
 
         if (data.success) {
-            // Store token and user data
+            // Store auth data
             localStorage.setItem(TOKEN_KEY, data.data.token);
             localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
             
-            // Update loader steps for signup
-            updateLoaderStep(1, 'Account created successfully!');
-            updateLoaderStep(2, 'Setting up your dashboard...');
-            updateLoaderStep(3, 'Personalizing your experience...');
-            updateLoaderStep(4, 'Almost ready...');
+            // Track successful signup
+            trackUserAction('signup_success', username);
             
             showLoader('Welcome to DailyFlow!', 'Setting up your personalized dashboard...');
             
-            // Redirect to dashboard after 3 seconds
+            // Redirect to dashboard
             setTimeout(() => {
                 window.location.href = 'dashboard.html';
             }, 3000);
             
         } else {
-            hideLoader();
-            if (data.errors && data.errors.length > 0) {
-                showToast(data.errors[0].message || 'Signup failed', 'error');
-            } else {
-                showToast(data.message || 'Signup failed. Please try again.', 'error');
-            }
+            ErrorHandler.handle({ response: { status: 400, data } }, 'signup');
         }
     } catch (error) {
         hideLoader();
-        showToast('Network error. Please check your connection.', 'error');
-        console.error('Signup error:', error);
+        ErrorHandler.handle(error, 'signup');
     }
+}
+
+// ==================== UTILITY FUNCTIONS ====================
+
+async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timeout. Please check your connection.');
+        }
+        throw error;
+    }
+}
+
+function clearFieldErrors() {
+    document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+    document.querySelectorAll('.error-message').forEach(el => el.remove());
+}
+
+function trackUserAction(action, username) {
+    // Track for analytics (optional)
+    const actions = JSON.parse(localStorage.getItem('dailyflow_actions') || '[]');
+    actions.unshift({
+        action,
+        username,
+        timestamp: new Date().toISOString(),
+        url: window.location.href
+    });
+    if (actions.length > 20) actions.pop();
+    localStorage.setItem('dailyflow_actions', JSON.stringify(actions));
 }
 
 async function verifyTokenAndRedirect() {
@@ -188,14 +425,17 @@ async function verifyTokenAndRedirect() {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`
-            }
+            },
+            credentials: 'include'
         });
 
         if (response.ok) {
-            // User is already logged in, redirect to dashboard
-            window.location.href = 'dashboard.html';
+            const data = await response.json();
+            if (data.success) {
+                window.location.href = 'dashboard.html';
+            }
         } else {
-            // Token is invalid, clear it
+            // Token invalid, clear storage
             localStorage.removeItem(TOKEN_KEY);
             localStorage.removeItem(USER_KEY);
         }
@@ -205,11 +445,15 @@ async function verifyTokenAndRedirect() {
 }
 
 function logout() {
-    // Clear local storage
+    // Clear all auth data
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem('remember_me');
     
-    // Redirect to login page
+    // Track logout
+    trackUserAction('logout', 'user');
+    
+    // Redirect to login
     window.location.href = 'index.html';
 }
 
@@ -220,20 +464,18 @@ function checkAuthStatus() {
     if (token && user) {
         currentUser = JSON.parse(user);
         
-        // If we're on login/signup page but user is logged in, redirect to dashboard
+        // If on auth page, redirect to dashboard
         if (window.location.pathname.includes('index.html') || 
             window.location.pathname.includes('login.html') ||
             window.location.pathname.includes('signup.html')) {
             window.location.href = 'dashboard.html';
         }
         
-        // Update UI to show user is logged in
         updateUIForLoggedInUser();
     }
 }
 
 function updateUIForLoggedInUser() {
-    // If we have user info, update UI elements
     if (currentUser && document.getElementById('userGreeting')) {
         document.getElementById('userGreeting').textContent = `Welcome, ${currentUser.fullName || currentUser.username}!`;
     }
@@ -242,6 +484,7 @@ function updateUIForLoggedInUser() {
 // ==================== PASSWORD VALIDATION ====================
 
 function validatePassword(password) {
+    if (!password) return 'Password is required';
     if (password.length < 8) return 'Password must be at least 8 characters';
     if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
     if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
@@ -255,7 +498,6 @@ function checkPasswordStrength() {
     const strengthBars = document.querySelectorAll('.strength-bar');
     const checks = document.querySelectorAll('.password-hints li');
     
-    // Reset all
     strengthBars.forEach(bar => bar.classList.remove('weak', 'medium', 'strong'));
     checks.forEach(check => check.classList.remove('valid'));
     
@@ -263,35 +505,33 @@ function checkPasswordStrength() {
     
     let strength = 0;
     
-    // Check criteria
     if (password.length >= 8) {
-        checks[0].classList.add('valid');
+        checks[0]?.classList.add('valid');
         strength++;
     }
     
     if (/[A-Z]/.test(password)) {
-        checks[1].classList.add('valid');
+        checks[1]?.classList.add('valid');
         strength++;
     }
     
     if (/[a-z]/.test(password)) {
-        checks[2].classList.add('valid');
+        checks[2]?.classList.add('valid');
         strength++;
     }
     
     if (/\d/.test(password)) {
-        checks[3].classList.add('valid');
+        checks[3]?.classList.add('valid');
         strength++;
     }
     
     if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
-        checks[4].classList.add('valid');
+        checks[4]?.classList.add('valid');
         strength++;
     }
     
-    // Update strength bars
-    for (let i = 0; i < strength; i++) {
-        if (i < strengthBars.length) {
+    for (let i = 0; i < strengthBars.length; i++) {
+        if (i < strength) {
             if (strength <= 2) {
                 strengthBars[i].classList.add('weak');
             } else if (strength <= 4) {
@@ -306,13 +546,15 @@ function checkPasswordStrength() {
 // ==================== UI FUNCTIONS ====================
 
 function showLogin() {
-    document.getElementById('loginForm').classList.add('active');
-    document.getElementById('signupForm').classList.remove('active');
+    document.getElementById('loginForm')?.classList.add('active');
+    document.getElementById('signupForm')?.classList.remove('active');
+    clearFieldErrors();
 }
 
 function showSignup() {
-    document.getElementById('signupForm').classList.add('active');
-    document.getElementById('loginForm').classList.remove('active');
+    document.getElementById('signupForm')?.classList.add('active');
+    document.getElementById('loginForm')?.classList.remove('active');
+    clearFieldErrors();
 }
 
 function useDemoAccount() {
@@ -322,30 +564,26 @@ function useDemoAccount() {
 }
 
 function setupPasswordToggles() {
-    const toggleButtons = document.querySelectorAll('.password-toggle');
-    
-    toggleButtons.forEach(button => {
+    document.querySelectorAll('.password-toggle').forEach(button => {
         button.addEventListener('click', function() {
             const input = this.parentElement.querySelector('input');
             const icon = this.querySelector('i');
             
             if (input.type === 'password') {
                 input.type = 'text';
-                icon.classList.remove('fa-eye');
-                icon.classList.add('fa-eye-slash');
+                icon?.classList.remove('fa-eye');
+                icon?.classList.add('fa-eye-slash');
             } else {
                 input.type = 'password';
-                icon.classList.remove('fa-eye-slash');
-                icon.classList.add('fa-eye');
+                icon?.classList.remove('fa-eye-slash');
+                icon?.classList.add('fa-eye');
             }
         });
     });
 }
 
 function setupFormValidation() {
-    const forms = document.querySelectorAll('form');
-    
-    forms.forEach(form => {
+    document.querySelectorAll('form').forEach(form => {
         form.addEventListener('submit', function(e) {
             const requiredInputs = this.querySelectorAll('input[required]');
             let isValid = true;
@@ -354,8 +592,6 @@ function setupFormValidation() {
                 if (!input.value.trim()) {
                     isValid = false;
                     input.classList.add('error');
-                } else {
-                    input.classList.remove('error');
                 }
             });
             
@@ -365,12 +601,21 @@ function setupFormValidation() {
             }
         });
         
-        // Real-time validation
-        const inputs = form.querySelectorAll('input');
-        inputs.forEach(input => {
+        form.querySelectorAll('input').forEach(input => {
             input.addEventListener('input', function() {
                 this.classList.remove('error');
+                const msg = this.parentElement.querySelector('.error-message');
+                if (msg) msg.remove();
             });
+        });
+    });
+}
+
+function setupInputErrorListeners() {
+    document.querySelectorAll('input').forEach(input => {
+        input.addEventListener('invalid', function(e) {
+            e.preventDefault();
+            this.classList.add('error');
         });
     });
 }
@@ -385,42 +630,19 @@ function showLoader(title = 'Loading...', subtitle = 'Please wait...') {
     if (loaderTitle) loaderTitle.textContent = title;
     if (loaderSubtitle) loaderSubtitle.textContent = subtitle;
     
-    loader.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-    
-    // Start step animations
-    startLoaderAnimation();
+    if (loader) {
+        loader.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        startLoaderAnimation();
+    }
 }
 
 function hideLoader() {
     const loader = document.getElementById('globalLoader');
-    loader.style.display = 'none';
-    document.body.style.overflow = 'auto';
-    
-    // Reset steps
-    resetLoaderSteps();
-}
-
-function updateLoaderStep(stepNumber, text) {
-    const step = document.getElementById(`step${stepNumber}`);
-    const subtitle = document.getElementById('loaderSubtitle');
-    
-    if (step) {
-        // Activate current step
-        step.classList.add('active');
-        
-        // Deactivate previous steps
-        for (let i = 1; i < stepNumber; i++) {
-            const prevStep = document.getElementById(`step${i}`);
-            if (prevStep) {
-                prevStep.classList.add('completed');
-                prevStep.classList.remove('active');
-            }
-        }
-    }
-    
-    if (subtitle && text) {
-        subtitle.textContent = text;
+    if (loader) {
+        loader.style.display = 'none';
+        document.body.style.overflow = 'auto';
+        resetLoaderSteps();
     }
 }
 
@@ -430,7 +652,7 @@ function startLoaderAnimation() {
     
     const animateSteps = () => {
         if (currentStep < steps.length) {
-            steps[currentStep].classList.add('active');
+            steps[currentStep]?.classList.add('active');
             currentStep++;
             setTimeout(animateSteps, 500);
         }
@@ -440,51 +662,32 @@ function startLoaderAnimation() {
 }
 
 function resetLoaderSteps() {
-    const steps = document.querySelectorAll('.loader-steps .step');
-    steps.forEach(step => {
+    document.querySelectorAll('.loader-steps .step').forEach(step => {
         step.classList.remove('active', 'completed');
     });
 }
 
 // ==================== TOAST NOTIFICATION ====================
 
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', duration = 5000) {
     const toast = document.getElementById('toast');
+    if (!toast) return;
     
     toast.textContent = message;
     toast.className = 'toast show';
     
-    // Add type class
-    if (type === 'success') {
-        toast.classList.add('success');
-    } else if (type === 'error') {
-        toast.classList.add('error');
-    } else if (type === 'warning') {
-        toast.classList.add('warning');
-    } else {
-        toast.classList.add('info');
-    }
+    const typeClasses = {
+        success: 'success',
+        error: 'error',
+        warning: 'warning',
+        info: 'info'
+    };
     
-    // Auto hide after 5 seconds
+    toast.classList.add(typeClasses[type] || 'info');
+    
     setTimeout(() => {
         toast.classList.remove('show');
-    }, 5000);
-}
-
-// ==================== SETUP ANIMATIONS ====================
-
-function setupAnimations() {
-    // Background animation
-    const circles = document.querySelectorAll('.circle');
-    circles.forEach((circle, index) => {
-        circle.style.animationDelay = `${index * 2}s`;
-    });
-    
-    // Form transition animation
-    const formContainers = document.querySelectorAll('.form-container');
-    formContainers.forEach(container => {
-        container.style.transition = 'all 0.5s ease';
-    });
+    }, duration);
 }
 
 // ==================== API HELPER FUNCTIONS ====================
@@ -494,7 +697,7 @@ async function makeAuthenticatedRequest(url, options = {}) {
     
     if (!token) {
         showToast('Please login first', 'error');
-        window.location.href = 'index.html';
+        setTimeout(() => window.location.href = 'index.html', 2000);
         return null;
     }
     
@@ -502,43 +705,46 @@ async function makeAuthenticatedRequest(url, options = {}) {
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
-        }
+        },
+        credentials: 'include'
     };
     
-    const mergedOptions = { ...defaultOptions, ...options };
-    
     try {
-        const response = await fetch(`${API_BASE_URL}${url}`, mergedOptions);
+        const response = await fetchWithTimeout(`${API_BASE_URL}${url}`, {
+            ...defaultOptions,
+            ...options
+        });
         
         if (response.status === 401) {
-            // Token expired, logout user
             localStorage.removeItem(TOKEN_KEY);
             localStorage.removeItem(USER_KEY);
             showToast('Session expired. Please login again.', 'error');
-            window.location.href = 'index.html';
+            setTimeout(() => window.location.href = 'index.html', 2000);
             return null;
         }
         
         return await response.json();
     } catch (error) {
-        console.error('API request error:', error);
-        showToast('Network error. Please try again.', 'error');
+        ErrorHandler.handle(error, 'authenticated_request');
         return null;
     }
 }
 
-// For dashboard page - get user profile
 async function getUserProfile() {
     const data = await makeAuthenticatedRequest('/api/auth/profile');
-    
-    if (data && data.success) {
-        return data.data.user;
-    }
-    
-    return null;
+    return data?.success ? data.data.user : null;
 }
 
-// Export functions for use in other files
+// Debug function to show recent errors (press F12, type showErrors())
+window.showErrors = function() {
+    console.table(ErrorHandler.getRecentErrors());
+};
+
+window.clearErrors = function() {
+    ErrorHandler.clearErrorLog();
+};
+
+// Export functions
 window.authFunctions = {
     login,
     signup,
@@ -547,10 +753,12 @@ window.authFunctions = {
     makeAuthenticatedRequest,
     showToast,
     showLoader,
-    hideLoader
+    hideLoader,
+    showErrors,
+    clearErrors
 };
 
-// Also add this CSS for the loader and toast
+// Add enhanced CSS for error states
 const style = document.createElement('style');
 style.textContent = `
 .loader-overlay {
@@ -583,6 +791,7 @@ style.textContent = `
     transition: all 0.3s ease;
     z-index: 10000;
     max-width: 400px;
+    word-wrap: break-word;
 }
 
 .toast.show {
@@ -590,22 +799,31 @@ style.textContent = `
     opacity: 1;
 }
 
-.toast.success {
-    background: #10b981;
+.toast.success { background: #10b981; }
+.toast.error { background: #ef4444; }
+.toast.warning { background: #f59e0b; }
+.toast.info { background: #3b82f6; }
+
+/* Error States */
+input.error {
+    border-color: #ef4444 !important;
+    animation: shake 0.3s ease-in-out;
 }
 
-.toast.error {
-    background: #ef4444;
+.error-message {
+    color: #ef4444;
+    font-size: 0.75rem;
+    margin-top: 4px;
+    margin-left: 35px;
 }
 
-.toast.warning {
-    background: #f59e0b;
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
 }
 
-.toast.info {
-    background: #3b82f6;
-}
-
+/* Password strength */
 .strength-bar.weak { background: #ef4444; }
 .strength-bar.medium { background: #f59e0b; }
 .strength-bar.strong { background: #10b981; }
@@ -613,6 +831,28 @@ style.textContent = `
 .password-hints li.valid {
     color: #10b981;
     text-decoration: line-through;
+}
+
+/* Debug panel (hidden by default) */
+.debug-panel {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.8);
+    color: #0f0;
+    padding: 10px;
+    border-radius: 5px;
+    font-family: monospace;
+    font-size: 12px;
+    max-width: 300px;
+    max-height: 200px;
+    overflow: auto;
+    display: none;
+    z-index: 10001;
+}
+
+.show-debug .debug-panel {
+    display: block;
 }
 `;
 document.head.appendChild(style);
