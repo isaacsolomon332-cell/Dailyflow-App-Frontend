@@ -1,7 +1,7 @@
 // ============================================
 // DAILYFLOW AUTHENTICATION SYSTEM
-// Version: 6.0.0
-// Clear error handling & CORS-friendly
+// Version: 6.1.0
+// Security Enhanced & CORS-friendly
 // ============================================
 
 // ============================================
@@ -11,22 +11,113 @@ const API_BASE_URL = "https://dailyflow-backend-kwuc.onrender.com";
 const TOKEN_KEY = "dailyflow_token";
 const USER_KEY = "dailyflow_user";
 
+// Security configuration
+const SECURITY_CONFIG = {
+    tokenExpiry: 24 * 60 * 60 * 1000, // 24 hours
+    maxLoginAttempts: 5,
+    lockoutDuration: 15 * 60 * 1000, // 15 minutes
+    requireHttps: true,
+    validateInputs: true,
+    sanitizeOutputs: true
+};
+
 // State management
 let isLoggingIn = false;
 let isSigningUp = false;
+let loginAttempts = {};
 
 // ============================================
-// HELPER FUNCTION: Fetch with timeout
+// SECURITY UTILITIES
+// ============================================
+
+/**
+ * Sanitize user input to prevent XSS attacks
+ */
+function sanitizeInput(input) {
+    if (!input) return '';
+    return String(input)
+        .replace(/[<>]/g, '') // Remove < and >
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;')
+        .replace(/\//g, '&#x2F;')
+        .trim();
+}
+
+/**
+ * Validate email format and sanitize
+ */
+function validateAndSanitizeEmail(email) {
+    const sanitized = sanitizeInput(email);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(sanitized) ? sanitized : null;
+}
+
+/**
+ * Validate username (allow letters, numbers, underscores, dots, @)
+ */
+function validateAndSanitizeUsername(username) {
+    const sanitized = sanitizeInput(username);
+    const usernameRegex = /^[a-zA-Z0-9_.@]+$/;
+    return usernameRegex.test(sanitized) ? sanitized : null;
+}
+
+/**
+ * Validate phone number (exactly 11 digits)
+ */
+function validatePhone(phone) {
+    const digitsOnly = phone.replace(/\D/g, '');
+    return digitsOnly.length === 11 ? digitsOnly : null;
+}
+
+/**
+ * Check rate limiting for login attempts
+ */
+function checkRateLimit(identifier) {
+    const now = Date.now();
+    const attempts = loginAttempts[identifier] || [];
+    
+    // Clean old attempts
+    const recentAttempts = attempts.filter(time => now - time < SECURITY_CONFIG.lockoutDuration);
+    
+    if (recentAttempts.length >= SECURITY_CONFIG.maxLoginAttempts) {
+        const timeLeft = Math.ceil((SECURITY_CONFIG.lockoutDuration - (now - recentAttempts[0])) / 1000 / 60);
+        throw new Error(`Too many login attempts. Please try again in ${timeLeft} minutes.`);
+    }
+    
+    recentAttempts.push(now);
+    loginAttempts[identifier] = recentAttempts;
+}
+
+/**
+ * Generate a secure random token for CSRF protection
+ */
+function generateCSRFToken() {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// ============================================
+// HELPER FUNCTION: Fetch with timeout & security
 // ============================================
 async function fetchWithTimeout(url, options = {}, timeout = 10000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     
+    // Add security headers
+    const secureOptions = {
+        ...options,
+        signal: controller.signal,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-Token': sessionStorage.getItem('csrf_token') || generateCSRFToken(),
+            ...options.headers
+        }
+    };
+    
     try {
-        const response = await fetch(url, {
-            ...options,
-            signal: controller.signal
-        });
+        const response = await fetch(url, secureOptions);
         clearTimeout(id);
         return response;
     } catch (error) {
@@ -36,7 +127,7 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
 }
 
 // ============================================
-// BACKEND CONNECTION CHECK
+// BACKEND CONNECTION CHECK (UPDATED WITH CORRECT ENDPOINT)
 // ============================================
 async function checkBackendConnection() {
     console.log('🔍 Checking backend connection...');
@@ -48,28 +139,27 @@ async function checkBackendConnection() {
         try {
             console.log(`🔄 Connection attempt ${attempt}/${maxAttempts}`);
             
-            // First attempt: no-cors mode to wake up server
-            await fetch(`${API_BASE_URL}/api/auth/health`, {
+            // UPDATED: Using the correct /api/health endpoint
+            await fetch(`${API_BASE_URL}/api/health`, {
                 method: 'GET',
                 mode: 'no-cors',
                 cache: 'no-cache'
             });
             
-            // Wait a bit for server to wake up
             if (attempt < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, attemptDelay));
             }
             
         } catch (error) {
             console.log(`⚠️ Attempt ${attempt} note:`, error.message);
-            // In no-cors mode, errors are expected - we ignore them
         }
     }
     
     // Now try a real request to verify connection
     try {
+        // UPDATED: Using the correct /api/health endpoint
         const response = await fetchWithTimeout(
-            `${API_BASE_URL}/api/auth/health`,
+            `${API_BASE_URL}/api/health`,
             {
                 method: 'GET',
                 headers: {
@@ -80,7 +170,14 @@ async function checkBackendConnection() {
         );
         
         if (response.ok) {
-            console.log('✅ Backend is connected!');
+            const data = await response.json();
+            console.log('✅ Backend is connected!', data);
+            
+            // Store CSRF token for future requests
+            if (!sessionStorage.getItem('csrf_token')) {
+                sessionStorage.setItem('csrf_token', generateCSRFToken());
+            }
+            
             return { success: true, message: 'Connected to server' };
         } else {
             return { 
@@ -273,7 +370,7 @@ function showToast(message, type = 'info', duration = 5000) {
 }
 
 // ============================================
-// LOGIN FUNCTION
+// LOGIN FUNCTION (with security enhancements)
 // ============================================
 async function login() {
     console.log('🔐 Login function called');
@@ -289,6 +386,17 @@ async function login() {
     
     if (!usernameOrEmail || !password) {
         showToast('Please enter both username and password', 'error');
+        return;
+    }
+    
+    // Sanitize inputs
+    const sanitizedUsername = sanitizeInput(usernameOrEmail);
+    
+    // Check rate limiting
+    try {
+        checkRateLimit(sanitizedUsername);
+    } catch (error) {
+        showToast(error.message, 'warning', 8000);
         return;
     }
     
@@ -323,18 +431,21 @@ async function login() {
             return;
         }
         
-        // Step 2: Make login request
+        // Step 2: Make login request with security headers
         updateLoaderMessage('🔐 Verifying', 'Checking your credentials...');
         
         const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'X-CSRF-Token': sessionStorage.getItem('csrf_token') || generateCSRFToken(),
+                'X-Requested-With': 'XMLHttpRequest'
             },
+            credentials: 'include',
             body: JSON.stringify({
-                usernameOrEmail: usernameOrEmail,
-                password: password,
+                usernameOrEmail: sanitizedUsername,
+                password: password, // Password is sent as-is (hashed on backend)
                 rememberMe: rememberMe
             })
         });
@@ -343,9 +454,22 @@ async function login() {
         
         // Step 3: Handle response
         if (data.success) {
-            localStorage.setItem(TOKEN_KEY, data.data.token);
-            localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
+            // Clear login attempts on success
+            delete loginAttempts[sanitizedUsername];
+            
+            // Store auth data securely
+            if (rememberMe) {
+                localStorage.setItem(TOKEN_KEY, data.data.token);
+                localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
+            } else {
+                sessionStorage.setItem(TOKEN_KEY, data.data.token);
+                sessionStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
+            }
+            
             localStorage.setItem('dailyflow_currentUser', data.data.user.username || data.data.user.email);
+            
+            // Set token expiry
+            localStorage.setItem('token_expiry', Date.now() + SECURITY_CONFIG.tokenExpiry);
             
             updateLoaderMessage('✅ Success!', 'Redirecting to dashboard...');
             
@@ -394,7 +518,7 @@ async function login() {
 }
 
 // ============================================
-// SIGNUP FUNCTION
+// SIGNUP FUNCTION (with security enhancements)
 // ============================================
 async function signup() {
     console.log('📝 Signup function called');
@@ -404,10 +528,10 @@ async function signup() {
         return;
     }
     
-    const fullName = document.getElementById('fullName')?.value.trim();
-    const email = document.getElementById('email')?.value.trim();
-    const username = document.getElementById('username')?.value.trim();
-    const phone = document.getElementById('phone')?.value.trim();
+    const fullName = sanitizeInput(document.getElementById('fullName')?.value.trim() || '');
+    const email = document.getElementById('email')?.value.trim() || '';
+    const username = document.getElementById('username')?.value.trim() || '';
+    const phone = document.getElementById('phone')?.value.trim() || '';
     const password = document.getElementById('password')?.value;
     const confirmPassword = document.getElementById('confirmPassword')?.value;
     const termsAgreement = document.getElementById('termsAgreement')?.checked || false;
@@ -423,18 +547,28 @@ async function signup() {
         return;
     }
     
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    // Validate and sanitize email
+    const validatedEmail = validateAndSanitizeEmail(email);
+    if (!validatedEmail) {
         showToast('Please enter a valid email address', 'error');
         return;
     }
     
-    const digitsOnly = phone.replace(/\D/g, '');
-    if (digitsOnly.length !== 11) {
+    // Validate and sanitize username
+    const validatedUsername = validateAndSanitizeUsername(username);
+    if (!validatedUsername) {
+        showToast('Username can only contain letters, numbers, underscores, dots, and @', 'error');
+        return;
+    }
+    
+    // Validate phone
+    const validatedPhone = validatePhone(phone);
+    if (!validatedPhone) {
         showToast('Phone number must be exactly 11 digits', 'error');
         return;
     }
     
+    // Password validation
     if (password.length < 8) {
         showToast('Password must be at least 8 characters long', 'error');
         return;
@@ -484,20 +618,22 @@ async function signup() {
             return;
         }
         
-        // Step 2: Make signup request
+        // Step 2: Make signup request with security headers
         updateLoaderMessage('📝 Creating', 'Setting up your account...');
         
         const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'X-CSRF-Token': sessionStorage.getItem('csrf_token') || generateCSRFToken(),
+                'X-Requested-With': 'XMLHttpRequest'
             },
             body: JSON.stringify({
                 fullName: fullName,
-                email: email,
-                username: username,
-                phoneNumber: digitsOnly,
+                email: validatedEmail,
+                username: validatedUsername,
+                phoneNumber: validatedPhone,
                 password: password,
                 confirmPassword: confirmPassword
             })
@@ -507,9 +643,13 @@ async function signup() {
         
         // Step 3: Handle response
         if (data.success) {
+            // Store auth data securely
             localStorage.setItem(TOKEN_KEY, data.data.token);
             localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
             localStorage.setItem('dailyflow_currentUser', data.data.user.username || data.data.user.email);
+            
+            // Set token expiry
+            localStorage.setItem('token_expiry', Date.now() + SECURITY_CONFIG.tokenExpiry);
             
             await handleProfilePicture();
             
@@ -769,22 +909,38 @@ function setupFormHandlers() {
 }
 
 // ============================================
-// LOGOUT FUNCTION
+// LOGOUT FUNCTION (with cleanup)
 // ============================================
 function logout() {
     if (confirm('Are you sure you want to logout?')) {
+        // Clear all storage
         localStorage.clear();
         sessionStorage.clear();
+        
+        // Clear login attempts
+        loginAttempts = {};
+        
+        // Generate new CSRF token for next session
+        sessionStorage.setItem('csrf_token', generateCSRFToken());
+        
         window.location.href = 'index.html';
     }
 }
 
 // ============================================
-// CHECK AUTH STATUS
+// CHECK AUTH STATUS (with expiry check)
 // ============================================
 function checkAuthStatus() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    const user = localStorage.getItem(USER_KEY);
+    const token = localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
+    const user = localStorage.getItem(USER_KEY) || sessionStorage.getItem(USER_KEY);
+    const expiry = localStorage.getItem('token_expiry');
+    
+    // Check if token has expired
+    if (expiry && Date.now() > parseInt(expiry)) {
+        console.log('Token expired, logging out');
+        logout();
+        return;
+    }
     
     if (token && user && !window.location.pathname.includes('dashboard.html')) {
         console.log('User already logged in, redirecting to dashboard');
@@ -797,6 +953,12 @@ function checkAuthStatus() {
 // ============================================
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 DailyFlow Auth System Initializing...');
+    console.log('📦 Version: 6.1.0 - Security Enhanced');
+    
+    // Generate CSRF token on page load
+    if (!sessionStorage.getItem('csrf_token')) {
+        sessionStorage.setItem('csrf_token', generateCSRFToken());
+    }
     
     checkAuthStatus();
     setupFormHandlers();
@@ -840,4 +1002,4 @@ window.showToast = showToast;
 window.showLoader = showLoader;
 window.hideLoader = hideLoader;
 
-console.log('✅ Global functions attached');// Updated on Fri, Feb 13, 2026 10:48:57 PM
+console.log('✅ Global functions attached');
