@@ -3,15 +3,6 @@ const API_BASE_URL = "https://dailyflow-backend-kwuc.onrender.com";
 const TOKEN_KEY = "dailyflow_token";
 const USER_KEY = "dailyflow_user";
 
-// Error types for better handling
-const ErrorTypes = {
-    NETWORK: 'network',
-    VALIDATION: 'validation',
-    AUTH: 'authentication',
-    SERVER: 'server',
-    UNKNOWN: 'unknown'
-};
-
 // DOM Elements
 let currentUser = null;
 
@@ -92,7 +83,7 @@ async function signup() {
     const fullName = document.getElementById('fullName').value.trim();
     const email = document.getElementById('email').value.trim();
     const username = document.getElementById('username').value.trim();
-    const phone = document.getElementById('phone').value.trim(); // OPTIONAL - can be empty
+    const phone = document.getElementById('phone').value.trim();
     const password = document.getElementById('password').value;
     const confirmPassword = document.getElementById('confirmPassword').value;
     const termsAgreement = document.getElementById('termsAgreement')?.checked || false;
@@ -103,7 +94,7 @@ async function signup() {
     // Frontend validation
     const validationErrors = [];
 
-    // Required fields
+    // Required fields check
     if (!fullName) validationErrors.push({ field: 'fullName', message: 'Full name is required' });
     if (!email) validationErrors.push({ field: 'email', message: 'Email is required' });
     if (!username) validationErrors.push({ field: 'username', message: 'Username is required' });
@@ -115,40 +106,62 @@ async function signup() {
         return;
     }
 
-    // Email validation
+    // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (email && !emailRegex.test(email)) {
         validationErrors.push({ field: 'email', message: 'Please enter a valid email address' });
     }
 
-    // Username validation
+    // Username format validation
     const usernameRegex = /^[a-zA-Z0-9_]+$/;
     if (username && !usernameRegex.test(username)) {
         validationErrors.push({ field: 'username', message: 'Username can only contain letters, numbers, and underscores' });
     }
 
     // Password validation
-    const passwordError = validatePassword(password);
-    if (passwordError) {
-        validationErrors.push({ field: 'password', message: passwordError });
+    if (password) {
+        if (password.length < 8) {
+            validationErrors.push({ field: 'password', message: 'Password must be at least 8 characters' });
+        } else {
+            if (!/[A-Z]/.test(password)) {
+                validationErrors.push({ field: 'password', message: 'Password must contain at least one uppercase letter' });
+            }
+            if (!/[a-z]/.test(password)) {
+                validationErrors.push({ field: 'password', message: 'Password must contain at least one lowercase letter' });
+            }
+            if (!/\d/.test(password)) {
+                validationErrors.push({ field: 'password', message: 'Password must contain at least one number' });
+            }
+            if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+                validationErrors.push({ field: 'password', message: 'Password must contain at least one special character' });
+            }
+        }
     }
 
+    // Confirm password match
     if (password && confirmPassword && password !== confirmPassword) {
         validationErrors.push({ field: 'confirmPassword', message: 'Passwords do not match' });
     }
 
-    // PHONE NUMBER - NO VALIDATION! ANYTHING GOES!
-    // Phone is completely optional - no validation needed
+    // PHONE NUMBER - NO VALIDATION AT ALL
+    // Phone is completely optional - no checks needed
 
+    // If there are validation errors, show them
     if (validationErrors.length > 0) {
         displayFieldErrors(validationErrors);
-        showToast('Please fix the errors in the form', 'error');
+        
+        // Show first error as toast
+        showToast(validationErrors[0].message, 'error');
         return;
     }
 
     showLoader('Creating your account...', 'Setting up your profile...');
 
     try {
+        console.log('Sending signup request...', {
+            fullName, email, username, phone: phone || undefined
+        });
+
         const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
             method: 'POST',
             headers: {
@@ -159,13 +172,14 @@ async function signup() {
                 fullName: fullName,
                 email: email,
                 username: username,
-                phoneNumber: phone || undefined, // Send undefined if empty
+                phoneNumber: phone || undefined,
                 password: password,
                 confirmPassword: confirmPassword
             })
         });
 
         const data = await response.json();
+        console.log('Signup response:', data);
 
         if (data.success) {
             localStorage.setItem(TOKEN_KEY, data.data.token);
@@ -179,39 +193,47 @@ async function signup() {
             
         } else {
             hideLoader();
+            
+            // Handle backend validation errors
             if (data.errors && data.errors.length > 0) {
-                // Display field errors from backend
                 const backendErrors = data.errors.map(err => ({
-                    field: err.field || getFieldFromMessage(err.message),
-                    message: err.message
+                    field: getFieldFromMessage(err.message || err),
+                    message: err.message || err
                 }));
                 displayFieldErrors(backendErrors);
-                showToast('Please fix the errors in the form', 'error');
+                showToast(backendErrors[0].message, 'error');
             } else {
                 showToast(data.message || 'Signup failed. Please try again.', 'error');
             }
         }
     } catch (error) {
         hideLoader();
+        console.error('Signup error details:', error);
         showToast('Network error. Please check your connection.', 'error');
-        console.error('Signup error:', error);
     }
 }
 
-// Helper to guess field from error message
+// Helper function to get field name from error message
 function getFieldFromMessage(message) {
+    if (!message) return null;
     const msg = message.toLowerCase();
+    if (msg.includes('full name')) return 'fullName';
     if (msg.includes('email')) return 'email';
     if (msg.includes('username')) return 'username';
-    if (msg.includes('password')) return 'password';
-    if (msg.includes('name')) return 'fullName';
     if (msg.includes('phone')) return 'phone';
+    if (msg.includes('password')) return 'password';
+    if (msg.includes('confirm')) return 'confirmPassword';
     return null;
 }
 
-// Display field errors under inputs
+// Display field errors
 function displayFieldErrors(errors) {
+    // Clear existing errors first
+    clearFieldErrors();
+    
     errors.forEach(err => {
+        if (!err.field) return;
+        
         const field = document.getElementById(err.field);
         if (field) {
             field.classList.add('error');
@@ -229,6 +251,7 @@ function displayFieldErrors(errors) {
     });
 }
 
+// Clear all field errors
 function clearFieldErrors() {
     document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
     document.querySelectorAll('.error-message').forEach(el => el.remove());
@@ -499,12 +522,8 @@ function showToast(message, type = 'info', duration = 5000) {
     }, duration);
 }
 
-// ==================== UPDATE YOUR HTML PHONE FIELD ====================
-// Remove the 'required' attribute from phone input in your HTML:
-// Change: <input type="tel" id="phone" required>
-// To:     <input type="tel" id="phone" placeholder="Phone Number (optional)">
+// ==================== STYLES ====================
 
-// ==================== ADD CSS FOR ERROR STATES ====================
 const style = document.createElement('style');
 style.textContent = `
 .loader-overlay {
