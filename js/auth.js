@@ -112,10 +112,22 @@ async function signup() {
         validationErrors.push({ field: 'email', message: 'Please enter a valid email address' });
     }
 
-    // Username format validation
-    const usernameRegex = /^[a-zA-Z0-9_]+$/;
-    if (username && !usernameRegex.test(username)) {
-        validationErrors.push({ field: 'username', message: 'Username can only contain letters, numbers, and underscores' });
+    // USERNAME - NOW ACCEPTS ANY INPUT (removed validation)
+    // No validation on username - any input is accepted
+    // Just check if it's not empty (already checked above)
+
+    // PHONE NUMBER - MUST BE EXACTLY 11 DIGITS
+    if (phone) {
+        // Check if phone contains only digits
+        const digitsOnly = phone.replace(/\D/g, '');
+        if (digitsOnly.length !== 11) {
+            validationErrors.push({ field: 'phone', message: 'Phone number must be exactly 11 digits' });
+        } else if (digitsOnly.length === 11) {
+            // Format nicely for display (optional)
+            document.getElementById('phone').value = digitsOnly;
+        }
+    } else {
+        validationErrors.push({ field: 'phone', message: 'Phone number is required' });
     }
 
     // Password validation
@@ -143,9 +155,6 @@ async function signup() {
         validationErrors.push({ field: 'confirmPassword', message: 'Passwords do not match' });
     }
 
-    // PHONE NUMBER - NO VALIDATION AT ALL
-    // Phone is completely optional - no checks needed
-
     // If there are validation errors, show them
     if (validationErrors.length > 0) {
         displayFieldErrors(validationErrors);
@@ -158,8 +167,11 @@ async function signup() {
     showLoader('Creating your account...', 'Setting up your profile...');
 
     try {
+        // Clean phone number to only digits before sending
+        const cleanPhone = phone.replace(/\D/g, '');
+
         console.log('Sending signup request...', {
-            fullName, email, username, phone: phone || undefined
+            fullName, email, username, phone: cleanPhone
         });
 
         const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
@@ -172,7 +184,7 @@ async function signup() {
                 fullName: fullName,
                 email: email,
                 username: username,
-                phoneNumber: phone || undefined,
+                phoneNumber: cleanPhone,
                 password: password,
                 confirmPassword: confirmPassword
             })
@@ -319,6 +331,21 @@ function checkPasswordStrength() {
     }
 }
 
+// ==================== PHONE NUMBER FORMATTING ====================
+
+function formatPhoneNumber(input) {
+    // Remove all non-digits
+    let value = input.value.replace(/\D/g, '');
+    
+    // Limit to 11 digits
+    if (value.length > 11) {
+        value = value.slice(0, 11);
+    }
+    
+    // Update input value
+    input.value = value;
+}
+
 // ==================== UI FUNCTIONS ====================
 
 function showLogin() {
@@ -396,6 +423,30 @@ function setupInputErrorListeners() {
     });
 }
 
+// Setup phone number validation
+function setupPhoneValidation() {
+    const phoneInput = document.getElementById('phone');
+    if (phoneInput) {
+        phoneInput.addEventListener('input', function() {
+            formatPhoneNumber(this);
+        });
+        
+        phoneInput.addEventListener('blur', function() {
+            const digits = this.value.replace(/\D/g, '');
+            if (digits.length > 0 && digits.length !== 11) {
+                this.classList.add('error');
+                let errorMsg = this.parentElement.querySelector('.error-message');
+                if (!errorMsg) {
+                    errorMsg = document.createElement('div');
+                    errorMsg.className = 'error-message';
+                    this.parentElement.appendChild(errorMsg);
+                }
+                errorMsg.textContent = 'Phone number must be exactly 11 digits';
+            }
+        });
+    }
+}
+
 async function verifyTokenAndRedirect() {
     try {
         const token = localStorage.getItem(TOKEN_KEY);
@@ -449,6 +500,30 @@ function checkAuthStatus() {
 function updateUIForLoggedInUser() {
     if (currentUser && document.getElementById('userGreeting')) {
         document.getElementById('userGreeting').textContent = `Welcome, ${currentUser.fullName || currentUser.username}!`;
+    }
+}
+
+// ==================== PROFILE PICTURE FUNCTIONS ====================
+
+function setupProfilePicture() {
+    const avatarInput = document.getElementById('avatarInput');
+    const avatarPreview = document.getElementById('avatarPreview');
+    
+    if (avatarInput && avatarPreview) {
+        avatarInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    avatarPreview.innerHTML = `<img src="${event.target.result}" alt="Profile Preview">`;
+                    avatarPreview.classList.add('has-image');
+                    
+                    // Store image in localStorage (optional)
+                    localStorage.setItem('profile_picture', event.target.result);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
     }
 }
 
@@ -521,6 +596,12 @@ function showToast(message, type = 'info', duration = 5000) {
         toast.classList.remove('show');
     }, duration);
 }
+
+// Initialize phone validation and profile picture
+document.addEventListener('DOMContentLoaded', function() {
+    setupPhoneValidation();
+    setupProfilePicture();
+});
 
 // ==================== STYLES ====================
 
@@ -595,6 +676,56 @@ input.error {
 .password-hints li.valid {
     color: #10b981;
     text-decoration: line-through;
+}
+
+/* Profile picture styles */
+.avatar-upload {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.avatar-preview {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    background: #f3f4f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+    overflow: hidden;
+    border: 2px dashed #d1d5db;
+}
+
+.avatar-preview.has-image {
+    border: 2px solid #4f46e5;
+}
+
+.avatar-preview i {
+    font-size: 2rem;
+    color: #9ca3af;
+}
+
+.avatar-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.upload-btn {
+    background: none;
+    border: 1px solid #4f46e5;
+    color: #4f46e5;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: all 0.3s;
+}
+
+.upload-btn:hover {
+    background: #4f46e5;
+    color: white;
 }
 `;
 document.head.appendChild(style);
