@@ -19,32 +19,164 @@ let appData = {
     }
 };
 
-// ===== INITIALIZATION =====
+// ===== FIXED INITIALIZATION - NO LOOP =====
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 DailyFlow Dashboard Initializing...');
     
-    // Check if user is logged in
-    const savedUser = localStorage.getItem('dailyflow_currentUser');
+    // Check for user in MULTIPLE possible locations
+    const savedUser = checkForValidUser();
+    
     if (savedUser) {
         currentUser = savedUser;
         console.log('✅ User authenticated:', currentUser);
         
-        // Initialize the app
-        initializeApp();
-        setupEventListeners();
-        updateCurrentDate();
-        setInterval(updateCurrentDate, 60000);
-        
-        // Check for missed days and add notification
-        setTimeout(() => {
-            checkMissedDays();
-        }, 1000);
+        try {
+            // Initialize the app with error handling
+            initializeApp();
+            setupEventListeners();
+            updateCurrentDate();
+            setInterval(updateCurrentDate, 60000);
+            
+            setTimeout(() => {
+                checkMissedDays();
+            }, 1000);
+        } catch (error) {
+            console.error('❌ Error initializing app:', error);
+            handleDashboardError();
+        }
     } else {
-        // Redirect to login page
-        console.log('❌ No user session, redirecting to login');
-        window.location.href = 'index.html';
+        console.log('❌ No valid user session found');
+        handleNoUserSession();
     }
 });
+
+// ===== NEW HELPER FUNCTIONS =====
+
+/**
+ * Check for valid user in all possible storage locations
+ */
+function checkForValidUser() {
+    // Check all possible places where user data might be stored
+    const possibleUsers = [
+        localStorage.getItem('dailyflow_currentUser'),
+        localStorage.getItem('dailyflow_user') ? JSON.parse(localStorage.getItem('dailyflow_user'))?.username : null,
+        sessionStorage.getItem('dailyflow_user') ? JSON.parse(sessionStorage.getItem('dailyflow_user'))?.username : null,
+        localStorage.getItem('user'),
+        sessionStorage.getItem('user')
+    ];
+    
+    // Return the first valid, non-empty user found
+    for (let user of possibleUsers) {
+        if (user && user !== 'null' && user !== 'undefined' && user !== '') {
+            return user;
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Handle case when no valid user session exists
+ */
+function handleNoUserSession() {
+    console.log('🔄 No valid session, preparing for redirect...');
+    
+    // Clean up any corrupted data
+    cleanupCorruptedData();
+    
+    // Check if we're being redirected in a loop
+    const redirectCount = sessionStorage.getItem('redirect_count') || 0;
+    
+    if (redirectCount < 3) {
+        // Increment redirect counter
+        sessionStorage.setItem('redirect_count', parseInt(redirectCount) + 1);
+        
+        // Show a helpful message
+        showToast('Your session has expired. Redirecting to login...', 'info', 3000);
+        
+        // Use replace instead of href to prevent history issues
+        setTimeout(() => {
+            window.location.replace('index.html');
+        }, 100);
+    } else {
+        // Too many redirects - force a full reset
+        console.log('⚠️ Too many redirects detected, forcing full reset');
+        forceFullReset();
+    }
+}
+
+/**
+ * Handle dashboard initialization error
+ */
+function handleDashboardError() {
+    console.error('❌ Dashboard initialization failed');
+    
+    showToast('Error loading dashboard. Redirecting to login...', 'error', 3000);
+    
+    // Clear potentially corrupted data
+    localStorage.removeItem('dailyflow_currentUser');
+    
+    setTimeout(() => {
+        window.location.replace('index.html');
+    }, 3000);
+}
+
+/**
+ * Clean up corrupted or invalid data
+ */
+function cleanupCorruptedData() {
+    const suspiciousItems = [
+        'dailyflow_currentUser',
+        'dailyflow_user',
+        'dailyflow_token',
+        'user',
+        'token'
+    ];
+    
+    suspiciousItems.forEach(item => {
+        const value = localStorage.getItem(item);
+        if (value === 'null' || value === 'undefined' || value === '') {
+            localStorage.removeItem(item);
+        }
+    });
+}
+
+/**
+ * Force a full reset when too many redirects occur
+ */
+function forceFullReset() {
+    // Clear ALL storage
+    localStorage.clear();
+    sessionStorage.clear();
+    
+    // Clear cookies
+    document.cookie.split(";").forEach(function(c) {
+        document.cookie = c
+            .replace(/^ +/, "")
+            .replace(/=.*/, "=;expires=" + new Date(0).toUTCString() + ";path=/");
+    });
+    
+    // Reset redirect counter
+    sessionStorage.removeItem('redirect_count');
+    
+    // Show message and redirect
+    alert('Too many redirects detected. All data has been reset. Please login again.');
+    window.location.replace('index.html');
+}
+
+/**
+ * Safe redirect function to prevent loops
+ */
+function safeRedirect(url) {
+    // Check if we're already redirecting
+    if (window.isRedirecting) return;
+    window.isRedirecting = true;
+    
+    // Use replace to avoid history issues
+    setTimeout(() => {
+        window.location.replace(url);
+    }, 100);
+}
 
 // ===== LOCAL STORAGE MANAGER =====
 class LocalStorageManager {
