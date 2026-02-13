@@ -398,33 +398,7 @@ function clearAllAccounts() {
     <div id="toast" class="toast"></div>
 
     <script src="js/auth.js"></script>
-    <script>
-        // Initialize image upload preview
-        document.getElementById('avatarInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(event) {
-                    const avatarPreview = document.getElementById('avatarPreview');
-                    avatarPreview.innerHTML = `<img src="${event.target.result}" alt="Profile Preview">`;
-                    avatarPreview.classList.add('has-image');
-                };
-                reader.readAsDataURL(file);
-            }
-        });
 
-        // Password strength checker
-        const passwordInput = document.getElementById('password');
-        if (passwordInput) {
-            passwordInput.addEventListener('input', checkPasswordStrength);
-        }
-
-        // Initialize form validation
-        document.addEventListener('DOMContentLoaded', function() {
-            setupFormValidation();
-            setupAnimations();
-        });
-    </script>
     <!-- Toast Notification -->
 <div id="toast" class="toast"></div>
 
