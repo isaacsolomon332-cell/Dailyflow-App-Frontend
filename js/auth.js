@@ -1,7 +1,7 @@
 // ============================================
 // DAILYFLOW AUTHENTICATION SYSTEM
-// Version: 6.1.0
-// Security Enhanced & CORS-friendly
+// Version: 6.2.0
+// CORS-friendly - Removed X-CSRF-Token headers
 // ============================================
 
 // ============================================
@@ -91,6 +91,7 @@ function checkRateLimit(identifier) {
 
 /**
  * Generate a secure random token for CSRF protection
+ * (Keeping this for potential future use, but not sending it in headers)
  */
 function generateCSRFToken() {
     const array = new Uint8Array(32);
@@ -105,19 +106,11 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     
-    // Add security headers
-    const secureOptions = {
-        ...options,
-        signal: controller.signal,
-        headers: {
-            'X-Requested-With': 'XMLHttpRequest',
-            'X-CSRF-Token': sessionStorage.getItem('csrf_token') || generateCSRFToken(),
-            ...options.headers
-        }
-    };
-    
     try {
-        const response = await fetch(url, secureOptions);
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
         clearTimeout(id);
         return response;
     } catch (error) {
@@ -139,7 +132,7 @@ async function checkBackendConnection() {
         try {
             console.log(`🔄 Connection attempt ${attempt}/${maxAttempts}`);
             
-            // UPDATED: Using the correct /api/health endpoint
+            // Using the correct /api/health endpoint
             await fetch(`${API_BASE_URL}/api/health`, {
                 method: 'GET',
                 mode: 'no-cors',
@@ -157,7 +150,7 @@ async function checkBackendConnection() {
     
     // Now try a real request to verify connection
     try {
-        // UPDATED: Using the correct /api/health endpoint
+        // Using the correct /api/health endpoint
         const response = await fetchWithTimeout(
             `${API_BASE_URL}/api/health`,
             {
@@ -172,12 +165,6 @@ async function checkBackendConnection() {
         if (response.ok) {
             const data = await response.json();
             console.log('✅ Backend is connected!', data);
-            
-            // Store CSRF token for future requests
-            if (!sessionStorage.getItem('csrf_token')) {
-                sessionStorage.setItem('csrf_token', generateCSRFToken());
-            }
-            
             return { success: true, message: 'Connected to server' };
         } else {
             return { 
@@ -370,7 +357,7 @@ function showToast(message, type = 'info', duration = 5000) {
 }
 
 // ============================================
-// LOGIN FUNCTION (with security enhancements)
+// LOGIN FUNCTION (with security enhancements - NO CSRF TOKEN)
 // ============================================
 async function login() {
     console.log('🔐 Login function called');
@@ -431,21 +418,20 @@ async function login() {
             return;
         }
         
-        // Step 2: Make login request with security headers
+        // Step 2: Make login request - REMOVED X-CSRF-Token header to fix CORS
         updateLoaderMessage('🔐 Verifying', 'Checking your credentials...');
         
         const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'X-CSRF-Token': sessionStorage.getItem('csrf_token') || generateCSRFToken(),
-                'X-Requested-With': 'XMLHttpRequest'
+                'Accept': 'application/json'
+                // X-CSRF-Token header removed to prevent CORS issues
             },
             credentials: 'include',
             body: JSON.stringify({
                 usernameOrEmail: sanitizedUsername,
-                password: password, // Password is sent as-is (hashed on backend)
+                password: password,
                 rememberMe: rememberMe
             })
         });
@@ -518,7 +504,7 @@ async function login() {
 }
 
 // ============================================
-// SIGNUP FUNCTION (with security enhancements)
+// SIGNUP FUNCTION (with security enhancements - NO CSRF TOKEN)
 // ============================================
 async function signup() {
     console.log('📝 Signup function called');
@@ -618,16 +604,15 @@ async function signup() {
             return;
         }
         
-        // Step 2: Make signup request with security headers
+        // Step 2: Make signup request - REMOVED X-CSRF-Token header to fix CORS
         updateLoaderMessage('📝 Creating', 'Setting up your account...');
         
         const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'X-CSRF-Token': sessionStorage.getItem('csrf_token') || generateCSRFToken(),
-                'X-Requested-With': 'XMLHttpRequest'
+                'Accept': 'application/json'
+                // X-CSRF-Token header removed to prevent CORS issues
             },
             body: JSON.stringify({
                 fullName: fullName,
@@ -920,9 +905,6 @@ function logout() {
         // Clear login attempts
         loginAttempts = {};
         
-        // Generate new CSRF token for next session
-        sessionStorage.setItem('csrf_token', generateCSRFToken());
-        
         window.location.href = 'index.html';
     }
 }
@@ -953,12 +935,7 @@ function checkAuthStatus() {
 // ============================================
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 DailyFlow Auth System Initializing...');
-    console.log('📦 Version: 6.1.0 - Security Enhanced');
-    
-    // Generate CSRF token on page load
-    if (!sessionStorage.getItem('csrf_token')) {
-        sessionStorage.setItem('csrf_token', generateCSRFToken());
-    }
+    console.log('📦 Version: 6.2.0 - CORS-friendly (CSRF headers removed)');
     
     checkAuthStatus();
     setupFormHandlers();
