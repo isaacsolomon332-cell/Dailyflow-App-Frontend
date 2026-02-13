@@ -1,7 +1,7 @@
 // ============================================
 // DAILYFLOW AUTHENTICATION SYSTEM
-// Version: 5.1.0
-// Works with your existing HTML (no changes needed)
+// Version: 6.0.0
+// Clear error handling & CORS-friendly
 // ============================================
 
 // ============================================
@@ -16,44 +16,98 @@ let isLoggingIn = false;
 let isSigningUp = false;
 
 // ============================================
-// BACKEND WAKE-UP FUNCTION
+// HELPER FUNCTION: Fetch with timeout
 // ============================================
-async function wakeUpBackend() {
-    console.log('⏰ Checking backend connection...');
+async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        throw error;
+    }
+}
+
+// ============================================
+// BACKEND CONNECTION CHECK
+// ============================================
+async function checkBackendConnection() {
+    console.log('🔍 Checking backend connection...');
     
     const maxAttempts = 3;
     const attemptDelay = 3000;
     
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            console.log(`🔄 Connection attempt ${attempt}/${maxAttempts}`);
             
-            const response = await fetch(`${API_BASE_URL}/api/auth/health`, {
+            // First attempt: no-cors mode to wake up server
+            await fetch(`${API_BASE_URL}/api/auth/health`, {
                 method: 'GET',
-                signal: controller.signal,
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
+                mode: 'no-cors',
+                cache: 'no-cache'
             });
             
-            clearTimeout(timeoutId);
-            
-            if (response.ok) {
-                console.log('✅ Backend is connected');
-                return true;
-            }
-        } catch (error) {
-            console.log(`⚠️ Attempt ${attempt} failed:`, error.message);
-            
+            // Wait a bit for server to wake up
             if (attempt < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, attemptDelay));
             }
+            
+        } catch (error) {
+            console.log(`⚠️ Attempt ${attempt} note:`, error.message);
+            // In no-cors mode, errors are expected - we ignore them
         }
     }
     
-    return false;
+    // Now try a real request to verify connection
+    try {
+        const response = await fetchWithTimeout(
+            `${API_BASE_URL}/api/auth/health`,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            },
+            5000
+        );
+        
+        if (response.ok) {
+            console.log('✅ Backend is connected!');
+            return { success: true, message: 'Connected to server' };
+        } else {
+            return { 
+                success: false, 
+                message: `Server responded with status: ${response.status}` 
+            };
+        }
+    } catch (error) {
+        console.log('❌ Connection failed:', error.message);
+        
+        if (error.name === 'AbortError' || error.message.includes('timeout')) {
+            return { 
+                success: false, 
+                message: 'Connection timeout - server is taking too long to respond' 
+            };
+        } else if (error.message.includes('Failed to fetch')) {
+            return { 
+                success: false, 
+                message: 'Cannot reach server - it might be starting up or offline' 
+            };
+        } else {
+            return { 
+                success: false, 
+                message: `Connection error: ${error.message}` 
+            };
+        }
+    }
 }
 
 // ============================================
@@ -71,18 +125,14 @@ function showLoader(title, subtitle, type = 'default') {
         return;
     }
     
-    // Update text
     if (loaderTitle) loaderTitle.textContent = title;
     if (loaderSubtitle) loaderSubtitle.textContent = subtitle;
     
-    // Reset steps
     resetLoaderSteps();
     
-    // Show loader
     loader.style.display = 'flex';
     document.body.style.overflow = 'hidden';
     
-    // Start step animation
     startLoaderSteps(type);
 }
 
@@ -92,12 +142,10 @@ function startLoaderSteps(type) {
     
     let currentStep = 0;
     
-    // Reset all steps
     steps.forEach(step => {
         step.classList.remove('active', 'completed');
     });
     
-    // Define messages based on type
     const messages = {
         login: [
             'Verifying credentials...',
@@ -121,19 +169,15 @@ function startLoaderSteps(type) {
     
     const stepMessages = messages[type] || messages.default;
     
-    // Animate steps
     const interval = setInterval(() => {
         if (currentStep < steps.length) {
-            // Mark previous step as completed
             if (currentStep > 0) {
                 steps[currentStep - 1].classList.add('completed');
                 steps[currentStep - 1].classList.remove('active');
             }
             
-            // Activate current step
             steps[currentStep].classList.add('active');
             
-            // Update message
             const messageEl = document.querySelector('.loader-message');
             if (messageEl && stepMessages[currentStep]) {
                 messageEl.innerHTML = `<i class="fas fa-${getStepIcon(currentStep, type)}"></i> <span>${stepMessages[currentStep]}</span>`;
@@ -145,7 +189,6 @@ function startLoaderSteps(type) {
         }
     }, 800);
     
-    // Store interval for cleanup
     window.loaderInterval = interval;
 }
 
@@ -167,12 +210,10 @@ function resetLoaderSteps() {
         step.classList.remove('active', 'completed');
     });
     
-    // Reset first step to active
     if (steps.length > 0) {
         steps[0].classList.add('active');
     }
     
-    // Reset message
     const messageEl = document.querySelector('.loader-message');
     if (messageEl) {
         messageEl.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> <span>Processing...</span>';
@@ -195,7 +236,6 @@ function hideLoader() {
         loader.style.display = 'none';
         document.body.style.overflow = 'auto';
         
-        // Clear animation interval
         if (window.loaderInterval) {
             clearInterval(window.loaderInterval);
             window.loaderInterval = null;
@@ -215,22 +255,18 @@ function showToast(message, type = 'info', duration = 5000) {
         return;
     }
     
-    // Clear any existing timeout
     if (window.toastTimeout) {
         clearTimeout(window.toastTimeout);
     }
     
-    // Set message and type
     toast.textContent = message;
     toast.className = 'toast show';
     
-    // Add type class
     if (type === 'success') toast.classList.add('success');
     else if (type === 'error') toast.classList.add('error');
     else if (type === 'warning') toast.classList.add('warning');
     else if (type === 'info') toast.classList.add('info');
     
-    // Auto hide after duration
     window.toastTimeout = setTimeout(() => {
         toast.classList.remove('show');
     }, duration);
@@ -242,45 +278,47 @@ function showToast(message, type = 'info', duration = 5000) {
 async function login() {
     console.log('🔐 Login function called');
     
-    // Prevent multiple clicks
     if (isLoggingIn) {
         showToast('Login already in progress...', 'info');
         return;
     }
     
-    // Get form values
     const usernameOrEmail = document.getElementById('loginUsername')?.value.trim();
     const password = document.getElementById('loginPassword')?.value;
     const rememberMe = document.getElementById('rememberMe')?.checked || false;
     
-    // Validate inputs
     if (!usernameOrEmail || !password) {
         showToast('Please enter both username and password', 'error');
         return;
     }
     
-    // Set loading state
     isLoggingIn = true;
     
-    // Show loader
     showLoader(
         '🔐 Signing In',
-        'Please wait while we verify your credentials...',
+        'Please wait...',
         'login'
     );
     
     try {
-        // Step 1: Check backend connection
+        // Step 1: Check connection
         updateLoaderMessage('🌐 Connecting', 'Checking server connection...');
-        const isConnected = await wakeUpBackend();
+        const connection = await checkBackendConnection();
         
-        if (!isConnected) {
+        if (!connection.success) {
             hideLoader();
-            showToast(
-                '⚠️ Cannot connect to server. Please check your internet connection.',
-                'error',
-                8000
-            );
+            
+            let userMessage = '⚠️ Cannot connect to server.\n\n';
+            
+            if (connection.message.includes('timeout')) {
+                userMessage += 'The server is taking too long to respond. This can happen if it\'s starting up.\n\nPlease try again in 1-2 minutes.';
+            } else if (connection.message.includes('Cannot reach')) {
+                userMessage += 'The server might be offline or starting up.\n\nPlease wait a moment and try again.';
+            } else {
+                userMessage += connection.message;
+            }
+            
+            showToast(userMessage, 'error', 8000);
             isLoggingIn = false;
             return;
         }
@@ -292,8 +330,8 @@ async function login() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Accept': 'application/json'
             },
-            credentials: 'include',
             body: JSON.stringify({
                 usernameOrEmail: usernameOrEmail,
                 password: password,
@@ -305,38 +343,52 @@ async function login() {
         
         // Step 3: Handle response
         if (data.success) {
-            // Store auth data
             localStorage.setItem(TOKEN_KEY, data.data.token);
             localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
             localStorage.setItem('dailyflow_currentUser', data.data.user.username || data.data.user.email);
             
-            // Step 4: Show success and redirect
             updateLoaderMessage('✅ Success!', 'Redirecting to dashboard...');
             
             setTimeout(() => {
                 window.location.href = 'dashboard.html';
-            }, 2000);
+            }, 1500);
         } else {
             hideLoader();
-            showToast(data.message || 'Login failed. Please check your credentials.', 'error');
+            
+            let errorMsg = 'Login failed. ';
+            
+            if (data.message) {
+                if (data.message.includes('Invalid') || data.message.includes('credentials')) {
+                    errorMsg = '❌ Invalid username or password. Please try again.';
+                } else if (data.message.includes('not found')) {
+                    errorMsg = '❌ Account not found. Please check your username or sign up.';
+                } else {
+                    errorMsg = `❌ ${data.message}`;
+                }
+            } else {
+                errorMsg = '❌ Login failed. Please try again.';
+            }
+            
+            showToast(errorMsg, 'error');
             isLoggingIn = false;
         }
     } catch (error) {
         console.error('❌ Login error:', error);
         hideLoader();
         
-        // User-friendly error message
-        let errorMessage = 'Network error. Please try again.';
+        let errorMessage = '❌ Login failed.\n\n';
         
         if (error.message.includes('Failed to fetch')) {
-            errorMessage = 'Cannot connect to server. Please check your internet connection.';
+            errorMessage += 'Cannot connect to server. Please check your internet connection and try again.';
         } else if (error.message.includes('timeout')) {
-            errorMessage = 'Request timed out. Please try again.';
+            errorMessage += 'Request timed out. The server is taking too long to respond.';
         } else if (error.message.includes('401')) {
-            errorMessage = 'Invalid username or password.';
+            errorMessage += 'Invalid username or password.';
+        } else {
+            errorMessage += `Error: ${error.message}`;
         }
         
-        showToast(errorMessage, 'error', 6000);
+        showToast(errorMessage, 'error', 7000);
         isLoggingIn = false;
     }
 }
@@ -347,13 +399,11 @@ async function login() {
 async function signup() {
     console.log('📝 Signup function called');
     
-    // Prevent multiple clicks
     if (isSigningUp) {
         showToast('Account creation already in progress...', 'info');
         return;
     }
     
-    // Get form values
     const fullName = document.getElementById('fullName')?.value.trim();
     const email = document.getElementById('email')?.value.trim();
     const username = document.getElementById('username')?.value.trim();
@@ -362,7 +412,7 @@ async function signup() {
     const confirmPassword = document.getElementById('confirmPassword')?.value;
     const termsAgreement = document.getElementById('termsAgreement')?.checked || false;
     
-    // Validate inputs
+    // Validation with clear messages
     if (!fullName || !email || !username || !phone || !password || !confirmPassword) {
         showToast('Please fill in all required fields', 'error');
         return;
@@ -373,21 +423,18 @@ async function signup() {
         return;
     }
     
-    // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
         showToast('Please enter a valid email address', 'error');
         return;
     }
     
-    // Phone validation
     const digitsOnly = phone.replace(/\D/g, '');
     if (digitsOnly.length !== 11) {
         showToast('Phone number must be exactly 11 digits', 'error');
         return;
     }
     
-    // Password validation
     if (password.length < 8) {
         showToast('Password must be at least 8 characters long', 'error');
         return;
@@ -408,28 +455,31 @@ async function signup() {
         return;
     }
     
-    // Set loading state
     isSigningUp = true;
     
-    // Show loader
     showLoader(
         '📝 Creating Account',
-        'Please wait while we set up your account...',
+        'Please wait...',
         'signup'
     );
     
     try {
-        // Step 1: Check backend connection
+        // Step 1: Check connection
         updateLoaderMessage('🌐 Connecting', 'Checking server connection...');
-        const isConnected = await wakeUpBackend();
+        const connection = await checkBackendConnection();
         
-        if (!isConnected) {
+        if (!connection.success) {
             hideLoader();
-            showToast(
-                '⚠️ Cannot connect to server. Please check your internet connection.',
-                'error',
-                8000
-            );
+            
+            let userMessage = '⚠️ Cannot connect to server.\n\n';
+            
+            if (connection.message.includes('timeout')) {
+                userMessage += 'The server is taking too long to respond. Please try again in 1-2 minutes.';
+            } else {
+                userMessage += connection.message;
+            }
+            
+            showToast(userMessage, 'error', 8000);
             isSigningUp = false;
             return;
         }
@@ -441,8 +491,8 @@ async function signup() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Accept': 'application/json'
             },
-            credentials: 'include',
             body: JSON.stringify({
                 fullName: fullName,
                 email: email,
@@ -457,15 +507,12 @@ async function signup() {
         
         // Step 3: Handle response
         if (data.success) {
-            // Store auth data
             localStorage.setItem(TOKEN_KEY, data.data.token);
             localStorage.setItem(USER_KEY, JSON.stringify(data.data.user));
             localStorage.setItem('dailyflow_currentUser', data.data.user.username || data.data.user.email);
             
-            // Handle profile picture if uploaded
             await handleProfilePicture();
             
-            // Step 4: Show success and redirect
             updateLoaderMessage('✅ Account Created!', 'Welcome to DailyFlow! Redirecting...');
             
             setTimeout(() => {
@@ -474,27 +521,37 @@ async function signup() {
         } else {
             hideLoader();
             
-            // Show specific error message
-            let errorMsg = data.message || 'Signup failed. Please try again.';
+            let errorMsg = '❌ Signup failed.\n\n';
             
-            if (data.errors && data.errors.length > 0) {
-                errorMsg = data.errors[0].message || errorMsg;
+            if (data.message) {
+                if (data.message.includes('already exists') || data.message.includes('already taken')) {
+                    errorMsg = '❌ An account with this email or username already exists.\n\nPlease try logging in instead.';
+                } else {
+                    errorMsg = `❌ ${data.message}`;
+                }
+            } else {
+                errorMsg += 'Please try again later.';
             }
             
-            showToast(errorMsg, 'error');
+            if (data.errors && data.errors.length > 0) {
+                errorMsg = `❌ ${data.errors[0].message}`;
+            }
+            
+            showToast(errorMsg, 'error', 7000);
             isSigningUp = false;
         }
     } catch (error) {
         console.error('❌ Signup error:', error);
         hideLoader();
         
-        // User-friendly error message
-        let errorMessage = 'Network error. Please try again.';
+        let errorMessage = '❌ Signup failed.\n\n';
         
         if (error.message.includes('Failed to fetch')) {
-            errorMessage = 'Cannot connect to server. Please check your internet connection.';
+            errorMessage += 'Cannot connect to server. Please check your internet connection.';
         } else if (error.message.includes('timeout')) {
-            errorMessage = 'Request timed out. Please try again.';
+            errorMessage += 'Request timed out. Please try again.';
+        } else {
+            errorMessage += `Error: ${error.message}`;
         }
         
         showToast(errorMessage, 'error', 6000);
@@ -513,7 +570,6 @@ async function handleProfilePicture() {
     
     const file = avatarInput.files[0];
     
-    // Validate file
     if (!file.type.startsWith('image/')) {
         showToast('Please select an image file', 'warning');
         return;
@@ -524,7 +580,6 @@ async function handleProfilePicture() {
         return;
     }
     
-    // Convert to base64 and store
     return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = function(e) {
@@ -578,7 +633,6 @@ function checkPasswordStrength() {
         special: document.getElementById('specialCheck')
     };
     
-    // Reset
     strengthBars.forEach(bar => {
         bar.classList.remove('weak', 'medium', 'strong');
     });
@@ -591,7 +645,6 @@ function checkPasswordStrength() {
     
     let strength = 0;
     
-    // Check each criterion
     if (password.length >= 8) {
         if (checks.length) checks.length.classList.add('valid');
         strength++;
@@ -617,7 +670,6 @@ function checkPasswordStrength() {
         strength++;
     }
     
-    // Update strength bars
     for (let i = 0; i < strengthBars.length; i++) {
         if (i < strength) {
             if (strength <= 2) {
@@ -649,11 +701,9 @@ function formatPhoneNumber(input) {
 // ============================================
 function setupPasswordToggles() {
     document.querySelectorAll('.password-toggle').forEach(button => {
-        // Remove existing listeners
         button.replaceWith(button.cloneNode(true));
     });
     
-    // Add fresh listeners
     document.querySelectorAll('.password-toggle').forEach(button => {
         button.addEventListener('click', function(e) {
             e.preventDefault();
@@ -698,20 +748,17 @@ function setupAvatarPreview() {
 }
 
 // ============================================
-// FORM SUBMISSION HANDLERS (Safety net)
+// FORM SUBMISSION HANDLERS
 // ============================================
 function setupFormHandlers() {
-    // Login form handler - this works alongside your onsubmit
     const loginForm = document.getElementById('loginFormElement');
     if (loginForm) {
         loginForm.addEventListener('submit', function(e) {
-            e.preventDefault(); // Still prevent default
-            // But our login function has a lock, so it won't double-call
+            e.preventDefault();
             window.login();
         });
     }
     
-    // Signup form handler
     const signupForm = document.getElementById('signupFormElement');
     if (signupForm) {
         signupForm.addEventListener('submit', function(e) {
@@ -726,11 +773,8 @@ function setupFormHandlers() {
 // ============================================
 function logout() {
     if (confirm('Are you sure you want to logout?')) {
-        // Clear all storage
         localStorage.clear();
         sessionStorage.clear();
-        
-        // Redirect to login
         window.location.href = 'index.html';
     }
 }
@@ -742,7 +786,6 @@ function checkAuthStatus() {
     const token = localStorage.getItem(TOKEN_KEY);
     const user = localStorage.getItem(USER_KEY);
     
-    // If on login page and already logged in, redirect to dashboard
     if (token && user && !window.location.pathname.includes('dashboard.html')) {
         console.log('User already logged in, redirecting to dashboard');
         window.location.href = 'dashboard.html';
@@ -755,23 +798,16 @@ function checkAuthStatus() {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 DailyFlow Auth System Initializing...');
     
-    // Check if already logged in
     checkAuthStatus();
-    
-    // Setup form handlers (safety net)
     setupFormHandlers();
-    
-    // Setup UI elements
     setupPasswordToggles();
     setupAvatarPreview();
     
-    // Setup password strength checker
     const passwordInput = document.getElementById('password');
     if (passwordInput) {
         passwordInput.addEventListener('input', checkPasswordStrength);
     }
     
-    // Setup phone formatting
     const phoneInput = document.getElementById('phone');
     if (phoneInput) {
         phoneInput.addEventListener('input', function() {
@@ -779,7 +815,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Add input error clearing
     document.querySelectorAll('input').forEach(input => {
         input.addEventListener('input', function() {
             this.classList.remove('error');
@@ -789,13 +824,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     console.log('✅ Auth System Ready');
-    console.log('📝 Functions available:', {
-        login: typeof login,
-        signup: typeof signup,
-        showLogin: typeof showLogin,
-        showSignup: typeof showSignup,
-        useDemoAccount: typeof useDemoAccount
-    });
 });
 
 // ============================================
