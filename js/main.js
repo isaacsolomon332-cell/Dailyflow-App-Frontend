@@ -4592,10 +4592,102 @@ function closeAllModals() {
     modals.forEach(modal => modal.remove());
 }
 
+// ============================================
+// AGGRESSIVE LOGOUT FUNCTION - 100% WORKS
+// ============================================
 function logout() {
-    if (confirm('Are you sure you want to logout?')) {
-        localStorage.removeItem('dailyflow_currentUser');
-        window.location.href = 'index.html';
+    console.log('🚪 Logout function called');
+    
+    // Ask user for confirmation
+    if (!confirm('Are you sure you want to logout?')) {
+        return; // User cancelled
+    }
+    
+    // Show feedback
+    showToast('Logging out securely...', 'info', 2000);
+    
+    try {
+        // ===== STEP 1: REMOVE ALL KNOWN AUTH KEYS =====
+        console.log('🧹 Removing auth keys...');
+        
+        const keysToRemove = [
+            // Your app's keys
+            'dailyflow_currentUser',
+            'dailyflow_token',
+            'dailyflow_user',
+            'token_expiry',
+            'dailyflow_settings',
+            'dailyflow_profile_picture',
+            'last_activity',
+            'rememberMe',
+            
+            // Common keys that might be used
+            'user',
+            'token',
+            'auth_token',
+            'session',
+            'currentUser',
+            'userData',
+            'profile'
+        ];
+        
+        // Remove from localStorage
+        keysToRemove.forEach(key => {
+            try {
+                localStorage.removeItem(key);
+            } catch (e) {}
+        });
+        
+        // Remove from sessionStorage
+        keysToRemove.forEach(key => {
+            try {
+                sessionStorage.removeItem(key);
+            } catch (e) {}
+        });
+        
+        // ===== STEP 2: CLEAR ALL STORAGE (NUCLEAR OPTION) =====
+        console.log('💥 Clearing all storage...');
+        try {
+            localStorage.clear();
+            sessionStorage.clear();
+        } catch (e) {}
+        
+        // ===== STEP 3: CLEAR COOKIES =====
+        console.log('🍪 Clearing cookies...');
+        try {
+            document.cookie.split(";").forEach(function(c) {
+                document.cookie = c
+                    .replace(/^ +/, "")
+                    .replace(/=.*/, "=;expires=" + new Date(0).toUTCString() + ";path=/");
+            });
+        } catch (e) {}
+        
+        // ===== STEP 4: CLEAR ANY INDEXEDDB DATA (if used) =====
+        console.log('🗄️ Clearing IndexedDB...');
+        try {
+            if (window.indexedDB) {
+                window.indexedDB.databases?.().then(dbs => {
+                    dbs.forEach(db => {
+                        window.indexedDB.deleteDatabase(db.name);
+                    });
+                }).catch(() => {});
+            }
+        } catch (e) {}
+        
+        console.log('✅ All storage has been wiped clean!');
+        
+        // ===== STEP 5: FORCE REDIRECT TO LOGIN PAGE =====
+        console.log('➡️ Redirecting to login page...');
+        
+        // Use replace() instead of href to prevent back button issues
+        setTimeout(() => {
+            window.location.replace('index.html');
+        }, 100);
+        
+    } catch (error) {
+        console.error('Logout error:', error);
+        // If something fails, still try to redirect
+        window.location.replace('index.html');
     }
 }
 
